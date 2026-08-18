@@ -3,8 +3,15 @@ package tephra
 import (
 	"bufio"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"sync"
 	"testing"
@@ -429,5 +436,104 @@ func TestContextCancelStopsRead(t *testing.T) {
 	}
 	if !errors.Is(rs.Err(), context.Canceled) {
 		t.Fatalf("Err = %v, want context.Canceled", rs.Err())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// TLS
+// ---------------------------------------------------------------------------
+
+// newSelfSigned returns an ephemeral self-signed certificate valid for 127.0.0.1 and localhost,
+// serving as both the server's leaf and a client trust anchor, plus a pool that trusts it.
+func newSelfSigned(t *testing.T) (tls.Certificate, *x509.CertPool) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "tephra-test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:              []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse certificate: %v", err)
+	}
+	pool := x509.NewCertPool()
+	pool.AddCert(leaf)
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key, Leaf: leaf}, pool
+}
+
+// newFakeTLSServer is newFakeServer over a TLS listener, returning a client tls.Config that trusts
+// the server's ephemeral certificate.
+func newFakeTLSServer(t *testing.T, handler func(*fakeSession, *tephrapb.Request)) (*fakeServer, *tls.Config) {
+	t.Helper()
+	serverCert, pool := newSelfSigned(t)
+	tcpLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	fs := &fakeServer{
+		ln:      tls.NewListener(tcpLn, &tls.Config{Certificates: []tls.Certificate{serverCert}}),
+		handler: handler,
+	}
+	fs.wg.Add(1)
+	go fs.accept()
+	t.Cleanup(fs.close)
+	return fs, &tls.Config{RootCAs: pool}
+}
+
+func TestTLSRoundTrip(t *testing.T) {
+	fs, clientTLS := newFakeTLSServer(t, func(sess *fakeSession, req *tephrapb.Request) {
+		switch req.GetKind().(type) {
+		case *tephrapb.Request_Append:
+			sess.send(&tephrapb.Response{RequestId: req.GetRequestId(), Kind: &tephrapb.Response_Append{Append: &tephrapb.AppendResponse{First: 1, Last: 1}}})
+		case *tephrapb.Request_Read:
+			sess.send(&tephrapb.Response{RequestId: req.GetRequestId(), Kind: &tephrapb.Response_ReadEvents{ReadEvents: &tephrapb.ReadEvents{Events: []*tephrapb.SequencedEvent{
+				{Position: 1, Event: &tephrapb.Event{Type: "Secure", Payload: []byte("tls")}},
+			}}}})
+			sess.send(&tephrapb.Response{RequestId: req.GetRequestId(), Kind: &tephrapb.Response_ReadEnd{ReadEnd: &tephrapb.ReadEnd{Watermark: 1}}})
+		}
+	})
+	// ServerName is left unset, so the client derives it (127.0.0.1) from the dial address and
+	// verifies against the certificate's IP SAN.
+	c := dialTest(t, fs.addr(), WithBulkConnections(0), WithTLS(clientTLS))
+	ctx := context.Background()
+
+	if _, err := c.Append(ctx, nil, nil); err != nil {
+		t.Fatalf("append over TLS: %v", err)
+	}
+	events, watermark, err := c.ReadAll(ctx, QueryAll(), Zero, nil)
+	if err != nil {
+		t.Fatalf("read over TLS: %v", err)
+	}
+	if len(events) != 1 || events[0].Type() != "Secure" {
+		t.Fatalf("events = %+v, want one 'Secure' event", events)
+	}
+	if watermark != 1 {
+		t.Fatalf("watermark = %d, want 1", watermark)
+	}
+}
+
+func TestTLSHandshakeFailsWhenUntrusted(t *testing.T) {
+	// With an empty tls.Config the client falls back to the system roots, which do not trust the
+	// server's self-signed certificate, so Dial must fail rather than connect insecurely.
+	fs, _ := newFakeTLSServer(t, func(sess *fakeSession, req *tephrapb.Request) {})
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := Dial(ctx, fs.addr(), WithBulkConnections(0), WithTLS(&tls.Config{})); err == nil {
+		t.Fatal("Dial should fail when the server certificate is untrusted")
 	}
 }

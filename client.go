@@ -3,6 +3,7 @@ package tephra
 import (
 	"bufio"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -34,6 +35,7 @@ type config struct {
 	maxInflightRequests int
 	bulkConnections     int
 	dialer              *net.Dialer
+	tlsConfig           *tls.Config
 }
 
 func defaultConfig() config {
@@ -86,6 +88,14 @@ func WithBulkConnections(n int) Option { return func(c *config) { c.bulkConnecti
 // WithDialer sets the net.Dialer used to establish each connection (for a custom timeout,
 // keep-alive, or local address). TCP_NODELAY is always enabled regardless.
 func WithDialer(d *net.Dialer) Option { return func(c *config) { c.dialer = d } }
+
+// WithTLS makes every connection a TLS client session over the TCP socket (the tephra server
+// serves implicit TLS: the session is established before the first frame). The given config is
+// used as-is except that, if its ServerName is empty, it defaults to the host part of the dial
+// address for certificate verification. Pass RootCAs to trust a private CA, Certificates for
+// mutual TLS, or a stricter MinVersion; the server currently requires TLS 1.3. Passing nil, or
+// omitting this option, uses a plaintext connection.
+func WithTLS(cfg *tls.Config) Option { return func(c *config) { c.tlsConfig = cfg } }
 
 // Client is a multiplexing, concurrent-safe client for a tephra event store. It opens a control
 // socket for appends, stats, and cancels plus a pool of bulk sockets for streaming reads and
@@ -370,7 +380,14 @@ func dialConn(ctx context.Context, addr string, cfg config) (*conn, error) {
 		return nil, err
 	}
 	if tcp, ok := netConn.(*net.TCPConn); ok {
+		// Set on the raw socket before any TLS wrapping; a *tls.Conn is not a *net.TCPConn.
 		_ = tcp.SetNoDelay(true)
+	}
+	if cfg.tlsConfig != nil {
+		netConn, err = tlsClient(ctx, netConn, addr, cfg.tlsConfig)
+		if err != nil {
+			return nil, err
+		}
 	}
 	cn := &conn{
 		netConn:  netConn,
@@ -383,6 +400,24 @@ func dialConn(ctx context.Context, addr string, cfg config) (*conn, error) {
 	go cn.readLoop()
 	go cn.writeLoop()
 	return cn, nil
+}
+
+// tlsClient wraps conn in a TLS client session and completes the handshake under ctx. When the
+// config has no ServerName it defaults to the host part of addr, so verifying a certificate while
+// dialing by hostname works without the caller restating the name.
+func tlsClient(ctx context.Context, conn net.Conn, addr string, cfg *tls.Config) (net.Conn, error) {
+	if cfg.ServerName == "" {
+		if host, _, err := net.SplitHostPort(addr); err == nil {
+			cfg = cfg.Clone()
+			cfg.ServerName = host
+		}
+	}
+	tlsConn := tls.Client(conn, cfg)
+	if err := tlsConn.HandshakeContext(ctx); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return tlsConn, nil
 }
 
 func (cn *conn) nextID() uint64 { return cn.idCounter.Add(1) }

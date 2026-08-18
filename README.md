@@ -122,6 +122,7 @@ you.
 | `WithRequestQueueDepth(n)` | 256 | Outbound queue depth per socket. |
 | `WithMaxFrameLen(n)` | 16 MiB | Largest frame accepted or produced. |
 | `WithDialer(d)` | n/a | Custom `net.Dialer`. `TCP_NODELAY` is always set. |
+| `WithTLS(cfg)` | off | Wrap each connection in a TLS client session (implicit TLS). `ServerName` defaults to the dial host; pass `RootCAs`, client `Certificates` (mTLS), or `MinVersion` via the config. |
 
 A `Client` is safe for concurrent use. Internally each socket runs a reader goroutine (which
 demultiplexes responses by request id) and a writer goroutine (which coalesces queued frames into
@@ -130,6 +131,28 @@ subscriptions round-robin across the **bulk** pool. Splitting the lanes keeps a 
 from delaying a small append (head-of-line blocking), and each stream buffers its frames
 unboundedly so a slow consumer never stalls the shared socket; backpressure comes instead from the
 per-socket in-flight budget.
+
+### TLS
+
+The tephra server can serve implicit TLS (TLS 1.3, server-authenticated). Enable it on the client
+with `WithTLS`, passing a standard `*tls.Config`:
+
+```go
+import "crypto/tls"
+
+// Verify against the system roots (public CA):
+client, err := tephra.Dial(ctx, "tephra.example.com:9000", tephra.WithTLS(&tls.Config{}))
+
+// Or trust a private CA, and/or present a client certificate for mutual TLS:
+client, err = tephra.Dial(ctx, "tephra.internal:9000", tephra.WithTLS(&tls.Config{
+    RootCAs:      privateCAs,
+    Certificates: []tls.Certificate{clientCert},
+}))
+```
+
+`ServerName` defaults to the host in the dial address, so verifying a hostname certificate needs no
+extra configuration. The TLS session is established before the first frame; the wire protocol is
+unchanged, so everything else behaves identically to a plaintext connection.
 
 ## Development
 

@@ -11,12 +11,21 @@ package tephra_test
 import (
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -62,14 +71,44 @@ func serverBinary(t *testing.T) string {
 	return builtBin
 }
 
-// startServer launches a fresh server instance with its own data directory and free port, and
-// returns its address. It is torn down when the test finishes.
+// syncBuffer is a bytes.Buffer safe for concurrent use, so os/exec's stdout/stderr copy goroutines
+// can write to it while a test reads the captured logs.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// startServer launches a fresh plaintext server instance with its own data directory and free
+// port, and returns its address. It is torn down when the test finishes.
 func startServer(t *testing.T) string {
+	addr, _ := launchServer(t, t.TempDir(), nil)
+	return addr
+}
+
+// launchServer starts tephra-server with the given data directory and extra environment, wires up
+// teardown and log capture, and waits until it accepts connections. It returns the address and the
+// captured log buffer.
+func launchServer(t *testing.T, dataDir string, extraEnv []string) (string, *syncBuffer) {
 	bin := serverBinary(t)
 	addr := fmt.Sprintf("127.0.0.1:%d", freePort(t))
-	cmd := exec.Command(bin, "--bind", addr, "--data-dir", t.TempDir())
-	var logs bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &logs, &logs
+	cmd := exec.Command(bin, "--bind", addr, "--data-dir", dataDir)
+	if len(extraEnv) > 0 {
+		cmd.Env = append(os.Environ(), extraEnv...)
+	}
+	logs := &syncBuffer{}
+	cmd.Stdout, cmd.Stderr = logs, logs
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}
@@ -81,7 +120,7 @@ func startServer(t *testing.T) string {
 		}
 	})
 	waitReady(t, addr)
-	return addr
+	return addr, logs
 }
 
 func freePort(t *testing.T) int {
@@ -381,4 +420,96 @@ func equalU64(a, b []uint64) bool {
 		}
 	}
 	return true
+}
+
+// writeTestCertFiles generates an ephemeral self-signed certificate valid for 127.0.0.1, writes it
+// and its key as PEM files in dir (for the server to load), and returns their paths plus a client
+// tls.Config that trusts the certificate.
+func writeTestCertFiles(t *testing.T, dir string) (certPath, keyPath string, clientCfg *tls.Config) {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generate key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "tephra-test"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageCertSign,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1")},
+		DNSNames:              []string{"localhost"},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("create certificate: %v", err)
+	}
+	leaf, err := x509.ParseCertificate(der)
+	if err != nil {
+		t.Fatalf("parse certificate: %v", err)
+	}
+
+	certPath = filepath.Join(dir, "cert.pem")
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	if err := os.WriteFile(certPath, certPEM, 0o600); err != nil {
+		t.Fatalf("write cert: %v", err)
+	}
+
+	keyPath = filepath.Join(dir, "key.pem")
+	keyDER, err := x509.MarshalPKCS8PrivateKey(key)
+	if err != nil {
+		t.Fatalf("marshal key: %v", err)
+	}
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: keyDER})
+	if err := os.WriteFile(keyPath, keyPEM, 0o600); err != nil {
+		t.Fatalf("write key: %v", err)
+	}
+
+	pool := x509.NewCertPool()
+	pool.AddCert(leaf)
+	return certPath, keyPath, &tls.Config{RootCAs: pool}
+}
+
+// startTLSServer launches a server configured for TLS via TEPHRA__TLS__CERT/KEY, and returns its
+// address plus a client tls.Config that trusts the ephemeral certificate. It skips if the binary
+// was built without the tls feature.
+func startTLSServer(t *testing.T) (string, *tls.Config) {
+	dir := t.TempDir()
+	certPath, keyPath, clientCfg := writeTestCertFiles(t, dir)
+	addr, logs := launchServer(t, dir, []string{
+		"TEPHRA__TLS__CERT=" + certPath,
+		"TEPHRA__TLS__KEY=" + keyPath,
+	})
+	if strings.Contains(logs.String(), "without the tls feature") {
+		t.Skip("tephra-server was built without the tls feature; rebuild with --features tls")
+	}
+	return addr, clientCfg
+}
+
+func TestIntegrationTLS(t *testing.T) {
+	addr, clientCfg := startTLSServer(t)
+	c := dialIT(t, addr, tephra.WithTLS(clientCfg))
+	ctx := context.Background()
+
+	res, err := c.Append(ctx, []tephra.Event{mustEvent(t, "Secure", []string{"tls:1"}, "over-tls")}, nil)
+	if err != nil {
+		t.Fatalf("append over TLS: %v", err)
+	}
+	if res.First != 1 || res.Last != 1 {
+		t.Fatalf("append result = %+v, want {1 1}", res)
+	}
+
+	events, watermark, err := c.ReadAll(ctx, tephra.QueryAll(), tephra.Zero, nil)
+	if err != nil {
+		t.Fatalf("read over TLS: %v", err)
+	}
+	if len(events) != 1 || events[0].Type() != "Secure" {
+		t.Fatalf("events = %+v, want one 'Secure' event", events)
+	}
+	if watermark != 1 {
+		t.Fatalf("watermark = %d, want 1", watermark)
+	}
 }
