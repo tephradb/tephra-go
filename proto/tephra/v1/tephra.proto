@@ -1,0 +1,169 @@
+syntax = "proto3";
+
+package tephra.v1;
+
+option go_package = "github.com/tqwewe/tephra-go/internal/tephrapb;tephrapb";
+
+// A single event: an opaque type string, a set of tag strings, and an opaque payload.
+// The server validates these against tephra's own constructors.
+message Event {
+  string type = 1;
+  repeated string tags = 2;
+  bytes payload = 3;
+}
+
+// One alternative in a query: types OR'd within the item, tags AND'd within the item.
+message QueryItem {
+  repeated string types = 1;
+  repeated string tags = 2;
+}
+
+// A query: the catch-all (all = true) or a set of items OR'd together.
+message Query {
+  bool all = 1;
+  repeated QueryItem items = 2;
+}
+
+// The guard on an append: reject if any event after `after` matches the query.
+// `after` = 0 means "consider the whole log" (positions are 1-based).
+message AppendCondition {
+  Query fail_if_events_match = 1;
+  uint64 after = 2;
+}
+
+message AppendRequest {
+  repeated Event events = 1;
+  optional AppendCondition condition = 2;
+}
+
+message ReadRequest {
+  Query query = 1;
+  // The pagination cursor, taken verbatim in both directions. For a forward read (`reverse` =
+  // false) it is an exclusive lower bound: return matches after this position, ascending, and
+  // `0` reads from the start. For a backward read (`reverse` = true) it is an exclusive upper
+  // bound: return matches before this position, descending; read from the tip by sending the
+  // maximum position (`u64::MAX`), and `0` therefore returns nothing (before the first position).
+  uint64 after = 2;
+  // Caps the number of matched events returned. Absent means unlimited (an old client, which
+  // never sets it, keeps the full-history behavior); explicit presence distinguishes a real
+  // cap of 0 (return nothing) from "no cap". Composes with `after` as a stateless pagination
+  // cursor: read a page, then read again with `after` set to the last position returned (the
+  // oldest, for a backward read).
+  optional uint64 limit = 3;
+  // Read backwards: matched events descending by position, before the `after` cursor. Defaults
+  // to false, so an old client that never sets it keeps the forward, ascending behavior.
+  bool reverse = 4;
+}
+
+// Opens a live subscription: catch up on all events matching `query` after `after`, then
+// tail new ones as they are committed. The server streams `ReadEvents` batches and a
+// `SubscribeCaughtUp` marker each time the stream reaches the live edge. A subscription never
+// ends with a `ReadEnd`; it terminates only when the connection closes or errors.
+message SubscribeRequest {
+  Query query = 1;
+  uint64 after = 2;
+}
+
+// Cancels an in-flight request on the same connection, identified by its request id. Sent by
+// a multiplexed client to stop a streaming read or subscription without tearing down the
+// shared connection. Fire-and-forget: the server stops producing frames for `target` and
+// sends no response for the cancel itself.
+message CancelRequest {
+  uint64 target = 1;
+}
+
+// Asks the server for a point-in-time snapshot of its operational state.
+message StatsRequest {}
+
+message AppendResponse {
+  uint64 first = 1;
+  uint64 last = 2;
+}
+
+message SequencedEvent {
+  uint64 position = 1;
+  Event event = 2;
+}
+
+// A streamed batch of events for a read. Zero or more of these precede a ReadEnd.
+message ReadEvents {
+  repeated SequencedEvent events = 1;
+}
+
+// Terminates a successful read, carrying the watermark the read was pinned to.
+message ReadEnd {
+  uint64 watermark = 1;
+}
+
+// Sent on a subscription each time it drains all events up to the current watermark and is
+// about to tail live. Re-armed: emitted once per live-edge, with non-decreasing watermarks.
+message SubscribeCaughtUp {
+  uint64 watermark = 1;
+}
+
+// A snapshot of the server's operational state, the reply to a StatsRequest.
+message StatsResponse {
+  // Total durable events, which (positions being dense and 1-based) is also the tip position.
+  uint64 event_count = 1;
+  // On-disk log segments in the data directory.
+  uint64 segment_count = 2;
+  // Total bytes on disk in the data directory (log segments plus index sidecars).
+  uint64 disk_bytes = 3;
+  // Seconds since the server began accepting connections.
+  uint64 uptime_seconds = 4;
+  // Connections currently being served (including the one asking).
+  uint64 active_connections = 5;
+  // Live subscriptions across all connections.
+  uint64 active_subscriptions = 6;
+  // The server's crate version.
+  string version = 7;
+  // Connections refused because the server was at its connection cap. Monotonic.
+  uint64 connections_refused = 8;
+  // The configured maximum concurrent connections, or 0 when unlimited.
+  uint64 max_connections = 9;
+  // Connections reaped for exceeding a handshake, idle, or incomplete-frame timeout. Monotonic.
+  uint64 connections_reaped = 10;
+}
+
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_CONFLICT = 1;
+  ERROR_CODE_AFTER_BEYOND_TIP = 2;
+  ERROR_CODE_EMPTY = 3;
+  ERROR_CODE_TOO_LARGE = 4;
+  ERROR_CODE_BAD_REQUEST = 5;
+  ERROR_CODE_INTERNAL = 6;
+  ERROR_CODE_SHUTDOWN = 7;
+}
+
+message ErrorResponse {
+  ErrorCode code = 1;
+  string message = 2;
+  // Set for a durable append conflict: the position of the conflicting event.
+  optional uint64 conflict_position = 3;
+  // A same-batch conflict is advisory and retryable; a durable one is terminal.
+  bool retryable = 4;
+}
+
+message Request {
+  uint64 request_id = 1;
+  oneof kind {
+    AppendRequest append = 2;
+    ReadRequest read = 3;
+    SubscribeRequest subscribe = 4;
+    CancelRequest cancel = 5;
+    StatsRequest stats = 6;
+  }
+}
+
+message Response {
+  uint64 request_id = 1;
+  oneof kind {
+    AppendResponse append = 2;
+    ReadEvents read_events = 3;
+    ReadEnd read_end = 4;
+    ErrorResponse error = 5;
+    SubscribeCaughtUp caught_up = 6;
+    StatsResponse stats = 7;
+  }
+}
