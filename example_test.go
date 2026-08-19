@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"log"
 
-	tephra "github.com/tqwewe/tephra-go"
+	tephra "github.com/tephradb/tephra-go"
 )
 
 // Example shows the common flow: connect, append an event, then drain a read.

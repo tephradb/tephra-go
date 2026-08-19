@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package tephra.v1;
 
-option go_package = "github.com/tqwewe/tephra-go/internal/tephrapb;tephrapb";
+option go_package = "github.com/tephradb/tephra-go/internal/tephrapb;tephrapb";
 
 // A single event: an opaque type string, a set of tag strings, and an opaque payload.
 // The server validates these against tephra's own constructors.

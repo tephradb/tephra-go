@@ -1405,7 +1405,7 @@ const file_tephra_v1_tephra_proto_rawDesc = "" +
 	"\x14ERROR_CODE_TOO_LARGE\x10\x04\x12\x1a\n" +
 	"\x16ERROR_CODE_BAD_REQUEST\x10\x05\x12\x17\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\x06\x12\x17\n" +
-	"\x13ERROR_CODE_SHUTDOWN\x10\aB8Z6github.com/tqwewe/tephra-go/internal/tephrapb;tephrapbb\x06proto3"
+	"\x13ERROR_CODE_SHUTDOWN\x10\aB:Z8github.com/tephradb/tephra-go/internal/tephrapb;tephrapbb\x06proto3"
 
 var (
 	file_tephra_v1_tephra_proto_rawDescOnce sync.Once

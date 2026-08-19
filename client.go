@@ -12,7 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/tqwewe/tephra-go/internal/tephrapb"
+	"github.com/tephradb/tephra-go/internal/tephrapb"
 )
 
 // unattributedRequestID is the request id the server uses for an error it cannot attribute to a

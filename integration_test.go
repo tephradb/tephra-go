@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	tephra "github.com/tqwewe/tephra-go"
+	tephra "github.com/tephradb/tephra-go"
 )
 
 var (

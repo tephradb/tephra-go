@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tqwewe/tephra-go/internal/tephrapb"
+	"github.com/tephradb/tephra-go/internal/tephrapb"
 	"google.golang.org/protobuf/proto"
 )
 

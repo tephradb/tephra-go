@@ -6,7 +6,7 @@ import (
 	"slices"
 	"strconv"
 
-	"github.com/tqwewe/tephra-go/internal/tephrapb"
+	"github.com/tephradb/tephra-go/internal/tephrapb"
 )
 
 // MaxNameLen is the maximum length, in bytes, of an event type or tag. The engine stores each

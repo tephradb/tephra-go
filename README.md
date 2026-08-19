@@ -6,7 +6,7 @@ the design of the reference Rust `tephra-client`: a single, concurrent-safe `Cli
 multiplexes many requests over a control socket plus a pool of bulk read sockets.
 
 ```sh
-go get github.com/tqwewe/tephra-go
+go get github.com/tephradb/tephra-go
 ```
 
 Requires Go 1.23+ (uses `iter.Seq2`); developed against Go 1.26.

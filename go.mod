@@ -1,4 +1,4 @@
-module github.com/tqwewe/tephra-go
+module github.com/tephradb/tephra-go
 
 go 1.23.0
 
