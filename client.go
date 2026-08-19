@@ -11,6 +11,7 @@ import (
 	"net"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/tephradb/tephra-go/internal/tephrapb"
 )
@@ -36,6 +37,7 @@ type config struct {
 	bulkConnections     int
 	dialer              *net.Dialer
 	tlsConfig           *tls.Config
+	authToken           string
 }
 
 func defaultConfig() config {
@@ -96,6 +98,14 @@ func WithDialer(d *net.Dialer) Option { return func(c *config) { c.dialer = d } 
 // mutual TLS, or a stricter MinVersion; the server currently requires TLS 1.3. Passing nil, or
 // omitting this option, uses a plaintext connection.
 func WithTLS(cfg *tls.Config) Option { return func(c *config) { c.tlsConfig = cfg } }
+
+// WithAuthToken sets the bearer token presented in each socket's opening Hello, for a server that
+// requires authentication. Every socket (control and bulk) authenticates with it independently, so
+// a rejected token fails Dial (a ServerError with ErrCodeUnauthenticated) rather than the first
+// request. An empty token (the default) connects unauthenticated, which the server accepts only
+// when it has no tokens configured. The token is sent regardless of transport; the server, not the
+// client, enforces any TLS requirement, so pair this with WithTLS to avoid sending it in the clear.
+func WithAuthToken(token string) Option { return func(c *config) { c.authToken = token } }
 
 // Client is a multiplexing, concurrent-safe client for a tephra event store. It opens a control
 // socket for appends, stats, and cancels plus a pool of bulk sockets for streaming reads and
@@ -397,9 +407,41 @@ func dialConn(ctx context.Context, addr string, cfg config) (*conn, error) {
 		outbound: make(chan *tephrapb.Request, cfg.requestQueueDepth),
 		dead:     make(chan struct{}),
 	}
+	// Complete the mandatory opening Hello synchronously, before the reader/writer actor tasks
+	// start, so a version mismatch or a rejected token fails the dial and the reply never reaches
+	// the request registry.
+	if err := cn.handshake(ctx); err != nil {
+		_ = netConn.Close()
+		return nil, err
+	}
 	go cn.readLoop()
 	go cn.writeLoop()
 	return cn, nil
+}
+
+// handshake sends the mandatory opening Hello and awaits the server's HelloAck. It runs directly on
+// the raw connection before the reader/writer goroutines start, writing and reading exactly one
+// frame apiece (no buffering), so the actor's bufio reader/writer begin frame-aligned. A dial
+// deadline on ctx bounds it, matching Dial's "ctx bounds the dial only" contract.
+func (cn *conn) handshake(ctx context.Context) error {
+	if dl, ok := ctx.Deadline(); ok {
+		_ = cn.netConn.SetDeadline(dl)
+		defer cn.netConn.SetDeadline(time.Time{})
+	}
+	// The Hello borrows the first id; its reply is consumed here and never registered.
+	req := helloRequest(cn.nextID(), cn.cfg.authToken)
+	if err := writeFrame(cn.netConn, req, cn.cfg.maxFrameLen); err != nil {
+		return err
+	}
+	var resp tephrapb.Response
+	if err := readFrame(cn.netConn, cn.cfg.maxFrameLen, &resp); err != nil {
+		if errors.Is(err, io.EOF) {
+			// A clean close before the ack is a torn handshake, not an orderly end-of-stream.
+			err = io.ErrUnexpectedEOF
+		}
+		return err
+	}
+	return verifyHelloAck(&resp)
 }
 
 // tlsClient wraps conn in a TLS client session and completes the handshake under ctx. When the

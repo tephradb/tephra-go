@@ -16,6 +16,11 @@
 // mirror the reference Rust client (16 MiB frames, 1024 in-flight requests per socket, 4 bulk
 // sockets).
 //
+// Every socket opens with a mandatory Hello handshake that negotiates the protocol version and,
+// for a server that requires authentication, presents a bearer token supplied via [WithAuthToken];
+// a version mismatch or a rejected token fails [Dial]. Pair it with [WithTLS] so the token is not
+// sent in the clear.
+//
 // Every operation takes a context.Context for cancellation and deadlines. The client performs no
 // automatic retries or reconnection: on a durable failure it surfaces the error (a [ServerError]
 // carries the server's code and a Retryable hint), leaving policy to the caller.

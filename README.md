@@ -9,7 +9,8 @@ multiplexes many requests over a control socket plus a pool of bulk read sockets
 go get github.com/tephradb/tephra-go
 ```
 
-Requires Go 1.23+ (uses `iter.Seq2`); developed against Go 1.26.
+Requires Go 1.23+ (uses `iter.Seq2`); developed against Go 1.26. Requires `tephra` 0.4 or above:
+every connection opens with a mandatory Hello handshake, which older servers do not speak.
 
 ## Quick start
 
@@ -123,6 +124,7 @@ you.
 | `WithMaxFrameLen(n)` | 16 MiB | Largest frame accepted or produced. |
 | `WithDialer(d)` | n/a | Custom `net.Dialer`. `TCP_NODELAY` is always set. |
 | `WithTLS(cfg)` | off | Wrap each connection in a TLS client session (implicit TLS). `ServerName` defaults to the dial host; pass `RootCAs`, client `Certificates` (mTLS), or `MinVersion` via the config. |
+| `WithAuthToken(token)` | off | Bearer token presented in each socket's opening Hello for a server that requires authentication. A rejected token fails `Dial`. Pair with `WithTLS` so it is not sent in the clear. |
 
 A `Client` is safe for concurrent use. Internally each socket runs a reader goroutine (which
 demultiplexes responses by request id) and a writer goroutine (which coalesces queued frames into
@@ -153,6 +155,24 @@ client, err = tephra.Dial(ctx, "tephra.internal:9000", tephra.WithTLS(&tls.Confi
 `ServerName` defaults to the host in the dial address, so verifying a hostname certificate needs no
 extra configuration. The TLS session is established before the first frame; the wire protocol is
 unchanged, so everything else behaves identically to a plaintext connection.
+
+### Authentication
+
+Every connection opens with a mandatory Hello handshake that negotiates the protocol version. When
+the server is configured with bearer tokens, present one with `WithAuthToken`:
+
+```go
+client, err := tephra.Dial(ctx, "tephra.internal:9000",
+    tephra.WithTLS(&tls.Config{RootCAs: privateCAs}),
+    tephra.WithAuthToken(os.Getenv("TEPHRA_TOKEN")),
+)
+```
+
+Each socket (control and bulk) authenticates independently, so a rejected token fails `Dial` with a
+`*ServerError` whose `Code` is `ErrCodeUnauthenticated`, rather than surfacing on the first request.
+The token is sent whether or not TLS is enabled — the server enforces any TLS requirement — so pair
+`WithAuthToken` with `WithTLS` to avoid sending it in the clear. Omitting the option connects
+unauthenticated, which a server accepts only when it has no tokens configured.
 
 ## Development
 

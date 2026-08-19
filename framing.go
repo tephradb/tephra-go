@@ -15,8 +15,10 @@ import (
 const DefaultMaxFrameLen uint32 = 16 * 1024 * 1024
 
 // A frame is a 4-byte big-endian uint32 length prefix followed by that many bytes of a
-// serialized protobuf message. This is the whole wire protocol: no magic, no version, no
-// handshake. The tephra server and client share exactly this framing.
+// serialized protobuf message. Every frame on the wire uses this shape; there is no magic byte.
+// A connection opens with a mandatory Hello/HelloAck handshake (see hello.go), also framed this
+// way, before any request/response frames flow. The tephra server and client share exactly this
+// framing.
 
 // writeFrame serializes msg and writes it as one length-prefixed frame. It does not flush; the
 // caller flushes at a send boundary. A body larger than maxFrameLen is rejected before any byte

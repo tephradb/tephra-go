@@ -29,6 +29,13 @@ type fakeServer struct {
 	handler func(*fakeSession, *tephrapb.Request)
 	wg      sync.WaitGroup
 
+	// authToken, when non-empty, is the bearer token the opening Hello must present; a mismatch
+	// is rejected with ERROR_CODE_UNAUTHENTICATED. Empty accepts any (or no) token.
+	authToken string
+	// ackVersion is the protocol version returned in the HelloAck (0 means ProtocolVersion), so a
+	// test can force a version mismatch.
+	ackVersion uint32
+
 	mu    sync.Mutex
 	conns []net.Conn
 }
@@ -47,11 +54,18 @@ func (s *fakeSession) send(resp *tephrapb.Response) {
 
 func newFakeServer(t *testing.T, handler func(*fakeSession, *tephrapb.Request)) *fakeServer {
 	t.Helper()
+	return startFakeServer(t, &fakeServer{handler: handler})
+}
+
+// startFakeServer binds a listener on fs and starts serving, so a caller can pre-set fields like
+// authToken or ackVersion before any connection is accepted.
+func startFakeServer(t *testing.T, fs *fakeServer) *fakeServer {
+	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
 	}
-	fs := &fakeServer{ln: ln, handler: handler}
+	fs.ln = ln
 	fs.wg.Add(1)
 	go fs.accept()
 	t.Cleanup(fs.close)
@@ -79,10 +93,20 @@ func (fs *fakeServer) serve(c net.Conn) {
 	defer fs.wg.Done()
 	sess := &fakeSession{w: bufio.NewWriter(c)}
 	r := bufio.NewReader(c)
+	established := false
 	for {
 		var req tephrapb.Request
 		if err := readFrame(r, DefaultMaxFrameLen, &req); err != nil {
 			return
+		}
+		if !established {
+			// The first frame must be the mandatory Hello; answer it here rather than in the
+			// test handler, so every handler only sees real requests.
+			if !fs.handleHello(sess, &req) {
+				return
+			}
+			established = true
+			continue
 		}
 		reqCopy := proto.Clone(&req).(*tephrapb.Request)
 		fs.wg.Add(1)
@@ -91,6 +115,27 @@ func (fs *fakeServer) serve(c net.Conn) {
 			fs.handler(sess, reqCopy)
 		}()
 	}
+}
+
+// handleHello answers the opening Hello, returning whether the connection may proceed. A non-Hello
+// first frame or a token mismatch (when authToken is set) is rejected with ERROR_CODE_UNAUTHENTICATED;
+// otherwise it acks with ackVersion (defaulting to ProtocolVersion).
+func (fs *fakeServer) handleHello(sess *fakeSession, req *tephrapb.Request) bool {
+	hello := req.GetHello()
+	if hello == nil {
+		sess.send(errResp(req.GetRequestId(), tephrapb.ErrorCode_ERROR_CODE_UNAUTHENTICATED, "first frame must be a hello"))
+		return false
+	}
+	if fs.authToken != "" && hello.GetAuthToken() != fs.authToken {
+		sess.send(errResp(req.GetRequestId(), tephrapb.ErrorCode_ERROR_CODE_UNAUTHENTICATED, "invalid or missing auth token"))
+		return false
+	}
+	version := fs.ackVersion
+	if version == 0 {
+		version = ProtocolVersion
+	}
+	sess.send(&tephrapb.Response{RequestId: req.GetRequestId(), Kind: &tephrapb.Response_HelloAck{HelloAck: &tephrapb.HelloAck{ProtocolVersion: version, ServerVersion: "fake"}}})
+	return true
 }
 
 func (fs *fakeServer) close() {
@@ -179,6 +224,65 @@ func TestServerErrorSurfaced(t *testing.T) {
 	}
 	if se.Code != ErrCodeConflict || !se.Retryable || se.ConflictPosition == nil || *se.ConflictPosition != 9 {
 		t.Fatalf("server error = %+v, want conflict/retryable/pos 9", se)
+	}
+}
+
+func TestAuthTokenAccepted(t *testing.T) {
+	// The server requires a token; the client presents the matching one, so the Hello succeeds and
+	// an append round-trips over both the control and bulk sockets.
+	fs := startFakeServer(t, &fakeServer{authToken: "s3cret", handler: func(sess *fakeSession, req *tephrapb.Request) {
+		if _, ok := req.GetKind().(*tephrapb.Request_Append); ok {
+			sess.send(&tephrapb.Response{RequestId: req.GetRequestId(), Kind: &tephrapb.Response_Append{Append: &tephrapb.AppendResponse{First: 1, Last: 1}}})
+		}
+	}})
+	c := dialTest(t, fs.addr(), WithAuthToken("s3cret"))
+
+	if _, err := c.Append(context.Background(), nil, nil); err != nil {
+		t.Fatalf("append after authenticated dial: %v", err)
+	}
+}
+
+func TestAuthTokenRejected(t *testing.T) {
+	// The server requires a token; the client presents the wrong one, so Dial fails with an
+	// unauthenticated ServerError rather than connecting.
+	fs := startFakeServer(t, &fakeServer{authToken: "right", handler: func(*fakeSession, *tephrapb.Request) {}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := Dial(ctx, fs.addr(), WithBulkConnections(0), WithAuthToken("wrong"))
+	var se *ServerError
+	if !errors.As(err, &se) {
+		t.Fatalf("Dial with a bad token = %v, want *ServerError", err)
+	}
+	if se.Code != ErrCodeUnauthenticated {
+		t.Fatalf("error code = %v, want unauthenticated", se.Code)
+	}
+}
+
+func TestMissingAuthTokenRejected(t *testing.T) {
+	// The server requires a token; the client presents none, so Dial fails as unauthenticated.
+	fs := startFakeServer(t, &fakeServer{authToken: "needed", handler: func(*fakeSession, *tephrapb.Request) {}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := Dial(ctx, fs.addr(), WithBulkConnections(0))
+	var se *ServerError
+	if !errors.As(err, &se) || se.Code != ErrCodeUnauthenticated {
+		t.Fatalf("Dial without a required token = %v, want unauthenticated *ServerError", err)
+	}
+}
+
+func TestHelloVersionMismatch(t *testing.T) {
+	// The server acks with a protocol version the client does not speak, so Dial fails with a
+	// ProtocolError rather than proceeding on an incompatible protocol.
+	fs := startFakeServer(t, &fakeServer{ackVersion: ProtocolVersion + 1, handler: func(*fakeSession, *tephrapb.Request) {}})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_, err := Dial(ctx, fs.addr(), WithBulkConnections(0))
+	var pe *ProtocolError
+	if !errors.As(err, &pe) {
+		t.Fatalf("Dial against a version-mismatched server = %v, want *ProtocolError", err)
 	}
 }
 

@@ -32,6 +32,8 @@ const (
 	ErrorCode_ERROR_CODE_BAD_REQUEST      ErrorCode = 5
 	ErrorCode_ERROR_CODE_INTERNAL         ErrorCode = 6
 	ErrorCode_ERROR_CODE_SHUTDOWN         ErrorCode = 7
+	// The connection failed authentication: a missing or invalid token, or a non-Hello first frame.
+	ErrorCode_ERROR_CODE_UNAUTHENTICATED ErrorCode = 8
 )
 
 // Enum value maps for ErrorCode.
@@ -45,6 +47,7 @@ var (
 		5: "ERROR_CODE_BAD_REQUEST",
 		6: "ERROR_CODE_INTERNAL",
 		7: "ERROR_CODE_SHUTDOWN",
+		8: "ERROR_CODE_UNAUTHENTICATED",
 	}
 	ErrorCode_value = map[string]int32{
 		"ERROR_CODE_UNSPECIFIED":      0,
@@ -55,6 +58,7 @@ var (
 		"ERROR_CODE_BAD_REQUEST":      5,
 		"ERROR_CODE_INTERNAL":         6,
 		"ERROR_CODE_SHUTDOWN":         7,
+		"ERROR_CODE_UNAUTHENTICATED":  8,
 	}
 )
 
@@ -820,6 +824,118 @@ func (x *SubscribeCaughtUp) GetWatermark() uint64 {
 	return 0
 }
 
+// The mandatory first frame on a connection: the client announces its protocol version and,
+// when authenticating, its bearer token. The server answers with a HelloAck or an error, and
+// accepts no other request until this succeeds.
+type Hello struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The protocol version the client speaks. The single compatibility mechanism: the server
+	// rejects a version it does not support rather than relying on field-presence heuristics.
+	ProtocolVersion uint32 `protobuf:"varint,1,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	// The bearer token, present when the client is authenticating. Absent leaves the connection
+	// unauthenticated, which the server accepts only when it has no tokens configured.
+	AuthToken     *string `protobuf:"bytes,2,opt,name=auth_token,json=authToken,proto3,oneof" json:"auth_token,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Hello) Reset() {
+	*x = Hello{}
+	mi := &file_tephra_v1_tephra_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Hello) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Hello) ProtoMessage() {}
+
+func (x *Hello) ProtoReflect() protoreflect.Message {
+	mi := &file_tephra_v1_tephra_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Hello.ProtoReflect.Descriptor instead.
+func (*Hello) Descriptor() ([]byte, []int) {
+	return file_tephra_v1_tephra_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *Hello) GetProtocolVersion() uint32 {
+	if x != nil {
+		return x.ProtocolVersion
+	}
+	return 0
+}
+
+func (x *Hello) GetAuthToken() string {
+	if x != nil && x.AuthToken != nil {
+		return *x.AuthToken
+	}
+	return ""
+}
+
+// The reply to a successful Hello: the server's protocol version and crate version.
+type HelloAck struct {
+	state           protoimpl.MessageState `protogen:"open.v1"`
+	ProtocolVersion uint32                 `protobuf:"varint,1,opt,name=protocol_version,json=protocolVersion,proto3" json:"protocol_version,omitempty"`
+	ServerVersion   string                 `protobuf:"bytes,2,opt,name=server_version,json=serverVersion,proto3" json:"server_version,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *HelloAck) Reset() {
+	*x = HelloAck{}
+	mi := &file_tephra_v1_tephra_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HelloAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HelloAck) ProtoMessage() {}
+
+func (x *HelloAck) ProtoReflect() protoreflect.Message {
+	mi := &file_tephra_v1_tephra_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HelloAck.ProtoReflect.Descriptor instead.
+func (*HelloAck) Descriptor() ([]byte, []int) {
+	return file_tephra_v1_tephra_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *HelloAck) GetProtocolVersion() uint32 {
+	if x != nil {
+		return x.ProtocolVersion
+	}
+	return 0
+}
+
+func (x *HelloAck) GetServerVersion() string {
+	if x != nil {
+		return x.ServerVersion
+	}
+	return ""
+}
+
 // A snapshot of the server's operational state, the reply to a StatsRequest.
 type StatsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -849,7 +965,7 @@ type StatsResponse struct {
 
 func (x *StatsResponse) Reset() {
 	*x = StatsResponse{}
-	mi := &file_tephra_v1_tephra_proto_msgTypes[14]
+	mi := &file_tephra_v1_tephra_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -861,7 +977,7 @@ func (x *StatsResponse) String() string {
 func (*StatsResponse) ProtoMessage() {}
 
 func (x *StatsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tephra_v1_tephra_proto_msgTypes[14]
+	mi := &file_tephra_v1_tephra_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -874,7 +990,7 @@ func (x *StatsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StatsResponse.ProtoReflect.Descriptor instead.
 func (*StatsResponse) Descriptor() ([]byte, []int) {
-	return file_tephra_v1_tephra_proto_rawDescGZIP(), []int{14}
+	return file_tephra_v1_tephra_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *StatsResponse) GetEventCount() uint64 {
@@ -961,7 +1077,7 @@ type ErrorResponse struct {
 
 func (x *ErrorResponse) Reset() {
 	*x = ErrorResponse{}
-	mi := &file_tephra_v1_tephra_proto_msgTypes[15]
+	mi := &file_tephra_v1_tephra_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -973,7 +1089,7 @@ func (x *ErrorResponse) String() string {
 func (*ErrorResponse) ProtoMessage() {}
 
 func (x *ErrorResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_tephra_v1_tephra_proto_msgTypes[15]
+	mi := &file_tephra_v1_tephra_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -986,7 +1102,7 @@ func (x *ErrorResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ErrorResponse.ProtoReflect.Descriptor instead.
 func (*ErrorResponse) Descriptor() ([]byte, []int) {
-	return file_tephra_v1_tephra_proto_rawDescGZIP(), []int{15}
+	return file_tephra_v1_tephra_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *ErrorResponse) GetCode() ErrorCode {
@@ -1027,6 +1143,7 @@ type Request struct {
 	//	*Request_Subscribe
 	//	*Request_Cancel
 	//	*Request_Stats
+	//	*Request_Hello
 	Kind          isRequest_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1034,7 +1151,7 @@ type Request struct {
 
 func (x *Request) Reset() {
 	*x = Request{}
-	mi := &file_tephra_v1_tephra_proto_msgTypes[16]
+	mi := &file_tephra_v1_tephra_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1046,7 +1163,7 @@ func (x *Request) String() string {
 func (*Request) ProtoMessage() {}
 
 func (x *Request) ProtoReflect() protoreflect.Message {
-	mi := &file_tephra_v1_tephra_proto_msgTypes[16]
+	mi := &file_tephra_v1_tephra_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1059,7 +1176,7 @@ func (x *Request) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Request.ProtoReflect.Descriptor instead.
 func (*Request) Descriptor() ([]byte, []int) {
-	return file_tephra_v1_tephra_proto_rawDescGZIP(), []int{16}
+	return file_tephra_v1_tephra_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *Request) GetRequestId() uint64 {
@@ -1121,6 +1238,15 @@ func (x *Request) GetStats() *StatsRequest {
 	return nil
 }
 
+func (x *Request) GetHello() *Hello {
+	if x != nil {
+		if x, ok := x.Kind.(*Request_Hello); ok {
+			return x.Hello
+		}
+	}
+	return nil
+}
+
 type isRequest_Kind interface {
 	isRequest_Kind()
 }
@@ -1145,6 +1271,10 @@ type Request_Stats struct {
 	Stats *StatsRequest `protobuf:"bytes,6,opt,name=stats,proto3,oneof"`
 }
 
+type Request_Hello struct {
+	Hello *Hello `protobuf:"bytes,7,opt,name=hello,proto3,oneof"`
+}
+
 func (*Request_Append) isRequest_Kind() {}
 
 func (*Request_Read) isRequest_Kind() {}
@@ -1154,6 +1284,8 @@ func (*Request_Subscribe) isRequest_Kind() {}
 func (*Request_Cancel) isRequest_Kind() {}
 
 func (*Request_Stats) isRequest_Kind() {}
+
+func (*Request_Hello) isRequest_Kind() {}
 
 type Response struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
@@ -1166,6 +1298,7 @@ type Response struct {
 	//	*Response_Error
 	//	*Response_CaughtUp
 	//	*Response_Stats
+	//	*Response_HelloAck
 	Kind          isResponse_Kind `protobuf_oneof:"kind"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -1173,7 +1306,7 @@ type Response struct {
 
 func (x *Response) Reset() {
 	*x = Response{}
-	mi := &file_tephra_v1_tephra_proto_msgTypes[17]
+	mi := &file_tephra_v1_tephra_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1185,7 +1318,7 @@ func (x *Response) String() string {
 func (*Response) ProtoMessage() {}
 
 func (x *Response) ProtoReflect() protoreflect.Message {
-	mi := &file_tephra_v1_tephra_proto_msgTypes[17]
+	mi := &file_tephra_v1_tephra_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1198,7 +1331,7 @@ func (x *Response) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Response.ProtoReflect.Descriptor instead.
 func (*Response) Descriptor() ([]byte, []int) {
-	return file_tephra_v1_tephra_proto_rawDescGZIP(), []int{17}
+	return file_tephra_v1_tephra_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *Response) GetRequestId() uint64 {
@@ -1269,6 +1402,15 @@ func (x *Response) GetStats() *StatsResponse {
 	return nil
 }
 
+func (x *Response) GetHelloAck() *HelloAck {
+	if x != nil {
+		if x, ok := x.Kind.(*Response_HelloAck); ok {
+			return x.HelloAck
+		}
+	}
+	return nil
+}
+
 type isResponse_Kind interface {
 	isResponse_Kind()
 }
@@ -1297,6 +1439,10 @@ type Response_Stats struct {
 	Stats *StatsResponse `protobuf:"bytes,7,opt,name=stats,proto3,oneof"`
 }
 
+type Response_HelloAck struct {
+	HelloAck *HelloAck `protobuf:"bytes,8,opt,name=hello_ack,json=helloAck,proto3,oneof"`
+}
+
 func (*Response_Append) isResponse_Kind() {}
 
 func (*Response_ReadEvents) isResponse_Kind() {}
@@ -1308,6 +1454,8 @@ func (*Response_Error) isResponse_Kind() {}
 func (*Response_CaughtUp) isResponse_Kind() {}
 
 func (*Response_Stats) isResponse_Kind() {}
+
+func (*Response_HelloAck) isResponse_Kind() {}
 
 var File_tephra_v1_tephra_proto protoreflect.FileDescriptor
 
@@ -1356,7 +1504,15 @@ const file_tephra_v1_tephra_proto_rawDesc = "" +
 	"\aReadEnd\x12\x1c\n" +
 	"\twatermark\x18\x01 \x01(\x04R\twatermark\"1\n" +
 	"\x11SubscribeCaughtUp\x12\x1c\n" +
-	"\twatermark\x18\x01 \x01(\x04R\twatermark\"\xa0\x03\n" +
+	"\twatermark\x18\x01 \x01(\x04R\twatermark\"e\n" +
+	"\x05Hello\x12)\n" +
+	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\"\n" +
+	"\n" +
+	"auth_token\x18\x02 \x01(\tH\x00R\tauthToken\x88\x01\x01B\r\n" +
+	"\v_auth_token\"\\\n" +
+	"\bHelloAck\x12)\n" +
+	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12%\n" +
+	"\x0eserver_version\x18\x02 \x01(\tR\rserverVersion\"\xa0\x03\n" +
 	"\rStatsResponse\x12\x1f\n" +
 	"\vevent_count\x18\x01 \x01(\x04R\n" +
 	"eventCount\x12#\n" +
@@ -1376,7 +1532,7 @@ const file_tephra_v1_tephra_proto_rawDesc = "" +
 	"\amessage\x18\x02 \x01(\tR\amessage\x120\n" +
 	"\x11conflict_position\x18\x03 \x01(\x04H\x00R\x10conflictPosition\x88\x01\x01\x12\x1c\n" +
 	"\tretryable\x18\x04 \x01(\bR\tretryableB\x14\n" +
-	"\x12_conflict_position\"\xb4\x02\n" +
+	"\x12_conflict_position\"\xde\x02\n" +
 	"\aRequest\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\x04R\trequestId\x122\n" +
@@ -1384,8 +1540,9 @@ const file_tephra_v1_tephra_proto_rawDesc = "" +
 	"\x04read\x18\x03 \x01(\v2\x16.tephra.v1.ReadRequestH\x00R\x04read\x12;\n" +
 	"\tsubscribe\x18\x04 \x01(\v2\x1b.tephra.v1.SubscribeRequestH\x00R\tsubscribe\x122\n" +
 	"\x06cancel\x18\x05 \x01(\v2\x18.tephra.v1.CancelRequestH\x00R\x06cancel\x12/\n" +
-	"\x05stats\x18\x06 \x01(\v2\x17.tephra.v1.StatsRequestH\x00R\x05statsB\x06\n" +
-	"\x04kind\"\xf2\x02\n" +
+	"\x05stats\x18\x06 \x01(\v2\x17.tephra.v1.StatsRequestH\x00R\x05stats\x12(\n" +
+	"\x05hello\x18\a \x01(\v2\x10.tephra.v1.HelloH\x00R\x05helloB\x06\n" +
+	"\x04kind\"\xa6\x03\n" +
 	"\bResponse\x12\x1d\n" +
 	"\n" +
 	"request_id\x18\x01 \x01(\x04R\trequestId\x123\n" +
@@ -1395,8 +1552,9 @@ const file_tephra_v1_tephra_proto_rawDesc = "" +
 	"\bread_end\x18\x04 \x01(\v2\x12.tephra.v1.ReadEndH\x00R\areadEnd\x120\n" +
 	"\x05error\x18\x05 \x01(\v2\x18.tephra.v1.ErrorResponseH\x00R\x05error\x12;\n" +
 	"\tcaught_up\x18\x06 \x01(\v2\x1c.tephra.v1.SubscribeCaughtUpH\x00R\bcaughtUp\x120\n" +
-	"\x05stats\x18\a \x01(\v2\x18.tephra.v1.StatsResponseH\x00R\x05statsB\x06\n" +
-	"\x04kind*\xdf\x01\n" +
+	"\x05stats\x18\a \x01(\v2\x18.tephra.v1.StatsResponseH\x00R\x05stats\x122\n" +
+	"\thello_ack\x18\b \x01(\v2\x13.tephra.v1.HelloAckH\x00R\bhelloAckB\x06\n" +
+	"\x04kind*\xff\x01\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13ERROR_CODE_CONFLICT\x10\x01\x12\x1f\n" +
@@ -1405,7 +1563,8 @@ const file_tephra_v1_tephra_proto_rawDesc = "" +
 	"\x14ERROR_CODE_TOO_LARGE\x10\x04\x12\x1a\n" +
 	"\x16ERROR_CODE_BAD_REQUEST\x10\x05\x12\x17\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\x06\x12\x17\n" +
-	"\x13ERROR_CODE_SHUTDOWN\x10\aB:Z8github.com/tephradb/tephra-go/internal/tephrapb;tephrapbb\x06proto3"
+	"\x13ERROR_CODE_SHUTDOWN\x10\a\x12\x1e\n" +
+	"\x1aERROR_CODE_UNAUTHENTICATED\x10\bB:Z8github.com/tephradb/tephra-go/internal/tephrapb;tephrapbb\x06proto3"
 
 var (
 	file_tephra_v1_tephra_proto_rawDescOnce sync.Once
@@ -1420,7 +1579,7 @@ func file_tephra_v1_tephra_proto_rawDescGZIP() []byte {
 }
 
 var file_tephra_v1_tephra_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_tephra_v1_tephra_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
+var file_tephra_v1_tephra_proto_msgTypes = make([]protoimpl.MessageInfo, 20)
 var file_tephra_v1_tephra_proto_goTypes = []any{
 	(ErrorCode)(0),            // 0: tephra.v1.ErrorCode
 	(*Event)(nil),             // 1: tephra.v1.Event
@@ -1437,10 +1596,12 @@ var file_tephra_v1_tephra_proto_goTypes = []any{
 	(*ReadEvents)(nil),        // 12: tephra.v1.ReadEvents
 	(*ReadEnd)(nil),           // 13: tephra.v1.ReadEnd
 	(*SubscribeCaughtUp)(nil), // 14: tephra.v1.SubscribeCaughtUp
-	(*StatsResponse)(nil),     // 15: tephra.v1.StatsResponse
-	(*ErrorResponse)(nil),     // 16: tephra.v1.ErrorResponse
-	(*Request)(nil),           // 17: tephra.v1.Request
-	(*Response)(nil),          // 18: tephra.v1.Response
+	(*Hello)(nil),             // 15: tephra.v1.Hello
+	(*HelloAck)(nil),          // 16: tephra.v1.HelloAck
+	(*StatsResponse)(nil),     // 17: tephra.v1.StatsResponse
+	(*ErrorResponse)(nil),     // 18: tephra.v1.ErrorResponse
+	(*Request)(nil),           // 19: tephra.v1.Request
+	(*Response)(nil),          // 20: tephra.v1.Response
 }
 var file_tephra_v1_tephra_proto_depIdxs = []int32{
 	2,  // 0: tephra.v1.Query.items:type_name -> tephra.v1.QueryItem
@@ -1457,17 +1618,19 @@ var file_tephra_v1_tephra_proto_depIdxs = []int32{
 	7,  // 11: tephra.v1.Request.subscribe:type_name -> tephra.v1.SubscribeRequest
 	8,  // 12: tephra.v1.Request.cancel:type_name -> tephra.v1.CancelRequest
 	9,  // 13: tephra.v1.Request.stats:type_name -> tephra.v1.StatsRequest
-	10, // 14: tephra.v1.Response.append:type_name -> tephra.v1.AppendResponse
-	12, // 15: tephra.v1.Response.read_events:type_name -> tephra.v1.ReadEvents
-	13, // 16: tephra.v1.Response.read_end:type_name -> tephra.v1.ReadEnd
-	16, // 17: tephra.v1.Response.error:type_name -> tephra.v1.ErrorResponse
-	14, // 18: tephra.v1.Response.caught_up:type_name -> tephra.v1.SubscribeCaughtUp
-	15, // 19: tephra.v1.Response.stats:type_name -> tephra.v1.StatsResponse
-	20, // [20:20] is the sub-list for method output_type
-	20, // [20:20] is the sub-list for method input_type
-	20, // [20:20] is the sub-list for extension type_name
-	20, // [20:20] is the sub-list for extension extendee
-	0,  // [0:20] is the sub-list for field type_name
+	15, // 14: tephra.v1.Request.hello:type_name -> tephra.v1.Hello
+	10, // 15: tephra.v1.Response.append:type_name -> tephra.v1.AppendResponse
+	12, // 16: tephra.v1.Response.read_events:type_name -> tephra.v1.ReadEvents
+	13, // 17: tephra.v1.Response.read_end:type_name -> tephra.v1.ReadEnd
+	18, // 18: tephra.v1.Response.error:type_name -> tephra.v1.ErrorResponse
+	14, // 19: tephra.v1.Response.caught_up:type_name -> tephra.v1.SubscribeCaughtUp
+	17, // 20: tephra.v1.Response.stats:type_name -> tephra.v1.StatsResponse
+	16, // 21: tephra.v1.Response.hello_ack:type_name -> tephra.v1.HelloAck
+	22, // [22:22] is the sub-list for method output_type
+	22, // [22:22] is the sub-list for method input_type
+	22, // [22:22] is the sub-list for extension type_name
+	22, // [22:22] is the sub-list for extension extendee
+	0,  // [0:22] is the sub-list for field type_name
 }
 
 func init() { file_tephra_v1_tephra_proto_init() }
@@ -1477,21 +1640,24 @@ func file_tephra_v1_tephra_proto_init() {
 	}
 	file_tephra_v1_tephra_proto_msgTypes[4].OneofWrappers = []any{}
 	file_tephra_v1_tephra_proto_msgTypes[5].OneofWrappers = []any{}
-	file_tephra_v1_tephra_proto_msgTypes[15].OneofWrappers = []any{}
-	file_tephra_v1_tephra_proto_msgTypes[16].OneofWrappers = []any{
+	file_tephra_v1_tephra_proto_msgTypes[14].OneofWrappers = []any{}
+	file_tephra_v1_tephra_proto_msgTypes[17].OneofWrappers = []any{}
+	file_tephra_v1_tephra_proto_msgTypes[18].OneofWrappers = []any{
 		(*Request_Append)(nil),
 		(*Request_Read)(nil),
 		(*Request_Subscribe)(nil),
 		(*Request_Cancel)(nil),
 		(*Request_Stats)(nil),
+		(*Request_Hello)(nil),
 	}
-	file_tephra_v1_tephra_proto_msgTypes[17].OneofWrappers = []any{
+	file_tephra_v1_tephra_proto_msgTypes[19].OneofWrappers = []any{
 		(*Response_Append)(nil),
 		(*Response_ReadEvents)(nil),
 		(*Response_ReadEnd)(nil),
 		(*Response_Error)(nil),
 		(*Response_CaughtUp)(nil),
 		(*Response_Stats)(nil),
+		(*Response_HelloAck)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1499,7 +1665,7 @@ func file_tephra_v1_tephra_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_tephra_v1_tephra_proto_rawDesc), len(file_tephra_v1_tephra_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   18,
+			NumMessages:   20,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

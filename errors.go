@@ -33,6 +33,9 @@ const (
 	ErrCodeInternal
 	// ErrCodeShutdown means the server is shutting down.
 	ErrCodeShutdown
+	// ErrCodeUnauthenticated means the connection failed authentication: a missing or invalid
+	// bearer token in the opening Hello (see WithAuthToken).
+	ErrCodeUnauthenticated
 )
 
 func (c ErrorCode) String() string {
@@ -51,6 +54,8 @@ func (c ErrorCode) String() string {
 		return "internal"
 	case ErrCodeShutdown:
 		return "shutdown"
+	case ErrCodeUnauthenticated:
+		return "unauthenticated"
 	default:
 		return "unknown"
 	}
@@ -129,6 +134,8 @@ func errorCodeFromPB(code tephrapb.ErrorCode) ErrorCode {
 		return ErrCodeInternal
 	case tephrapb.ErrorCode_ERROR_CODE_SHUTDOWN:
 		return ErrCodeShutdown
+	case tephrapb.ErrorCode_ERROR_CODE_UNAUTHENTICATED:
+		return ErrCodeUnauthenticated
 	default:
 		return ErrCodeUnknown
 	}
