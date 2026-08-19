@@ -1,6 +1,6 @@
 # tephra-go
 
-A Go client for a [tephra](https://github.com/tqwewe/tephra) event store, speaking its
+A Go client for a [tephra](https://github.com/tephradb/tephra) event store, speaking its
 length-prefixed protobuf-over-TCP protocol. It is wire-compatible with `tephra-server` and mirrors
 the design of the reference Rust `tephra-client`: a single, concurrent-safe `Client` that
 multiplexes many requests over a control socket plus a pool of bulk read sockets.
@@ -99,6 +99,19 @@ for sub.Next() {
 Cancel a stream by calling `Close`, or by cancelling the `context.Context` passed to `Read` /
 `Subscribe`. Either sends a best-effort cancel to the server so it stops producing frames.
 
+## Server stats
+
+`Stats` returns a point-in-time snapshot: the event, segment, and on-disk-byte counts, uptime, and
+the live connection and subscription counts.
+
+```go
+stats, err := client.Stats(ctx)
+if err != nil {
+    log.Fatal(err)
+}
+fmt.Printf("%d events across %d segments\n", stats.EventCount, stats.SegmentCount)
+```
+
 ## Errors
 
 - `*ServerError`: the server returned an error. `Code` is an `ErrorCode`; `Retryable` marks an
@@ -170,7 +183,7 @@ client, err := tephra.Dial(ctx, "tephra.internal:9000",
 
 Each socket (control and bulk) authenticates independently, so a rejected token fails `Dial` with a
 `*ServerError` whose `Code` is `ErrCodeUnauthenticated`, rather than surfacing on the first request.
-The token is sent whether or not TLS is enabled — the server enforces any TLS requirement — so pair
+The token is sent whether or not TLS is enabled (the server enforces any TLS requirement), so pair
 `WithAuthToken` with `WithTLS` to avoid sending it in the clear. Omitting the option connects
 unauthenticated, which a server accepts only when it has no tokens configured.
 
