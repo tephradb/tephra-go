@@ -317,6 +317,32 @@ func TestIntegrationAppendConditionConflict(t *testing.T) {
 	}
 }
 
+func TestIntegrationAppendConditionAlreadyExists(t *testing.T) {
+	c := dialIT(t, startServer(t))
+	ctx := context.Background()
+
+	key, err := tephra.WithTags("idempotency:order-42")
+	if err != nil {
+		t.Fatalf("WithTags: %v", err)
+	}
+	cond := tephra.ExistsOnly(tephra.QueryItems(key))
+
+	// First idempotent append succeeds.
+	if _, err := c.Append(ctx, []tephra.Event{mustEvent(t, "OrderPlaced", []string{"idempotency:order-42"}, "{}")}, &cond); err != nil {
+		t.Fatalf("first append: %v", err)
+	}
+
+	// Retrying the same key is rejected as already-existing, distinct from a boundary conflict.
+	_, err = c.Append(ctx, []tephra.Event{mustEvent(t, "OrderPlaced", []string{"idempotency:order-42"}, "{}")}, &cond)
+	var se *tephra.ServerError
+	if !errors.As(err, &se) {
+		t.Fatalf("guarded append error = %v, want *ServerError", err)
+	}
+	if se.Code != tephra.ErrCodeAlreadyExists {
+		t.Fatalf("error code = %v, want already_exists", se.Code)
+	}
+}
+
 func TestIntegrationStats(t *testing.T) {
 	c := dialIT(t, startServer(t))
 	ctx := context.Background()

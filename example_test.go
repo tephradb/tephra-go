@@ -66,6 +66,42 @@ func ExampleClient_Append_condition() {
 	}
 }
 
+// ExampleClient_Append_idempotent guards an append with an existence check so a retried command
+// applies at most once. If an event carrying the idempotency key already exists anywhere in the
+// log, the append is rejected with ErrCodeAlreadyExists, which the caller treats as "already
+// applied" (a no-op) rather than an error to surface.
+func ExampleClient_Append_idempotent() {
+	ctx := context.Background()
+	client, err := tephra.Dial(ctx, "127.0.0.1:9000")
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer client.Close()
+
+	key, err := tephra.WithTags("idempotency:order-42")
+	if err != nil {
+		log.Fatal(err)
+	}
+	event, err := tephra.NewEvent("OrderPlaced", []string{"idempotency:order-42"}, []byte(`{}`))
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// Fail if this key already landed anywhere in the log.
+	cond := tephra.ExistsOnly(tephra.QueryItems(key))
+	_, err = client.Append(ctx, []tephra.Event{event}, &cond)
+
+	var serverErr *tephra.ServerError
+	switch {
+	case err == nil:
+		fmt.Println("order placed")
+	case errors.As(err, &serverErr) && serverErr.Code == tephra.ErrCodeAlreadyExists:
+		fmt.Println("order already placed, treating as a no-op")
+	default:
+		log.Fatal(err)
+	}
+}
+
 // ExampleClient_Subscribe tails matching events live, printing each and noting when the stream
 // reaches the live edge.
 func ExampleClient_Subscribe() {

@@ -126,6 +126,57 @@ func TestConditionToPB(t *testing.T) {
 	if pb.GetFailIfEventsMatch().GetAll() {
 		t.Fatal("condition query should be items, not all")
 	}
+	if pb.FailIfExists != nil {
+		t.Fatal("fail_if_exists should be absent when unset")
+	}
+}
+
+func TestConditionToPBFailIfExists(t *testing.T) {
+	dedupe, err := WithTags("idempotency:abc")
+	if err != nil {
+		t.Fatalf("WithTags: %v", err)
+	}
+	boundary, err := WithTags("course:c1")
+	if err != nil {
+		t.Fatalf("WithTags: %v", err)
+	}
+	cond := NewAppendCondition(QueryItems(boundary))
+	cond.After = 42
+	exists := QueryItems(dedupe)
+	cond.FailIfExists = &exists
+
+	pb := cond.toPB()
+	if pb.GetAfter() != 42 {
+		t.Fatalf("after = %d, want 42", pb.GetAfter())
+	}
+	if pb.GetFailIfExists() == nil {
+		t.Fatal("fail_if_exists should be set")
+	}
+	if got := pb.GetFailIfExists().GetItems()[0].GetTags(); len(got) != 1 || got[0] != "idempotency:abc" {
+		t.Fatalf("fail_if_exists tags = %v, want [idempotency:abc]", got)
+	}
+}
+
+func TestExistsOnly(t *testing.T) {
+	dedupe, err := WithTags("idempotency:abc")
+	if err != nil {
+		t.Fatalf("WithTags: %v", err)
+	}
+	cond := ExistsOnly(QueryItems(dedupe))
+	if cond.FailIfExists == nil {
+		t.Fatal("fail_if_exists should be set")
+	}
+	// The boundary is an empty item set, which matches nothing, so only the existence check fires.
+	pb := cond.toPB()
+	if pb.GetFailIfEventsMatch().GetAll() {
+		t.Fatal("boundary query should be an empty item set, not all")
+	}
+	if len(pb.GetFailIfEventsMatch().GetItems()) != 0 {
+		t.Fatal("boundary query should have no items")
+	}
+	if pb.GetAfter() != 0 {
+		t.Fatalf("after = %d, want 0", pb.GetAfter())
+	}
 }
 
 func TestServerErrorFromPB(t *testing.T) {
@@ -145,5 +196,32 @@ func TestServerErrorFromPB(t *testing.T) {
 	}
 	if se.ConflictPosition == nil || *se.ConflictPosition != 7 {
 		t.Fatalf("conflict position = %v, want 7", se.ConflictPosition)
+	}
+}
+
+func TestErrorCodeFromPB(t *testing.T) {
+	cases := []struct {
+		wire tephrapb.ErrorCode
+		want ErrorCode
+		str  string
+	}{
+		{tephrapb.ErrorCode_ERROR_CODE_CONFLICT, ErrCodeConflict, "conflict"},
+		{tephrapb.ErrorCode_ERROR_CODE_ALREADY_EXISTS, ErrCodeAlreadyExists, "already_exists"},
+		{tephrapb.ErrorCode_ERROR_CODE_AFTER_BEYOND_TIP, ErrCodeAfterBeyondTip, "after_beyond_tip"},
+		{tephrapb.ErrorCode_ERROR_CODE_EMPTY, ErrCodeEmpty, "empty"},
+		{tephrapb.ErrorCode_ERROR_CODE_TOO_LARGE, ErrCodeTooLarge, "too_large"},
+		{tephrapb.ErrorCode_ERROR_CODE_BAD_REQUEST, ErrCodeBadRequest, "bad_request"},
+		{tephrapb.ErrorCode_ERROR_CODE_INTERNAL, ErrCodeInternal, "internal"},
+		{tephrapb.ErrorCode_ERROR_CODE_SHUTDOWN, ErrCodeShutdown, "shutdown"},
+		{tephrapb.ErrorCode_ERROR_CODE_UNAUTHENTICATED, ErrCodeUnauthenticated, "unauthenticated"},
+		{tephrapb.ErrorCode_ERROR_CODE_UNSPECIFIED, ErrCodeUnknown, "unknown"},
+	}
+	for _, tc := range cases {
+		if got := errorCodeFromPB(tc.wire); got != tc.want {
+			t.Errorf("errorCodeFromPB(%v) = %v, want %v", tc.wire, got, tc.want)
+		}
+		if got := tc.want.String(); got != tc.str {
+			t.Errorf("%v.String() = %q, want %q", tc.want, got, tc.str)
+		}
 	}
 }

@@ -19,8 +19,14 @@ type ErrorCode int
 const (
 	// ErrCodeUnknown is the unspecified code, or any code this build does not recognize.
 	ErrCodeUnknown ErrorCode = iota
-	// ErrCodeConflict means an append condition failed. See ServerError.ConflictPosition.
+	// ErrCodeConflict means an append's boundary check failed: an event matching the condition
+	// landed after the observed position. Rebuild the decision model and retry. See
+	// ServerError.ConflictPosition.
 	ErrCodeConflict
+	// ErrCodeAlreadyExists means an append's FailIfExists existence check matched: the guarded
+	// event already exists. Distinct from ErrCodeConflict so a client can treat it as "already
+	// applied" (a no-op) rather than "rebuild and retry".
+	ErrCodeAlreadyExists
 	// ErrCodeAfterBeyondTip means a read cursor was past the server's durable tip.
 	ErrCodeAfterBeyondTip
 	// ErrCodeEmpty means an append carried zero events.
@@ -42,6 +48,8 @@ func (c ErrorCode) String() string {
 	switch c {
 	case ErrCodeConflict:
 		return "conflict"
+	case ErrCodeAlreadyExists:
+		return "already_exists"
 	case ErrCodeAfterBeyondTip:
 		return "after_beyond_tip"
 	case ErrCodeEmpty:
@@ -62,8 +70,9 @@ func (c ErrorCode) String() string {
 }
 
 // ServerError is an error response returned by the server. Retryable distinguishes an advisory
-// same-batch append conflict (safe to retry) from a durable one (terminal). ConflictPosition is
-// set only for a durable append conflict.
+// same-batch append conflict (safe to retry) from a durable one (terminal), for either
+// ErrCodeConflict or ErrCodeAlreadyExists. ConflictPosition is set only for a durable append
+// conflict of either kind.
 type ServerError struct {
 	Code             ErrorCode
 	Message          string
@@ -122,6 +131,8 @@ func errorCodeFromPB(code tephrapb.ErrorCode) ErrorCode {
 	switch code {
 	case tephrapb.ErrorCode_ERROR_CODE_CONFLICT:
 		return ErrCodeConflict
+	case tephrapb.ErrorCode_ERROR_CODE_ALREADY_EXISTS:
+		return ErrCodeAlreadyExists
 	case tephrapb.ErrorCode_ERROR_CODE_AFTER_BEYOND_TIP:
 		return ErrCodeAfterBeyondTip
 	case tephrapb.ErrorCode_ERROR_CODE_EMPTY:

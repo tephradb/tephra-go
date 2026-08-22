@@ -34,6 +34,11 @@ const (
 	ErrorCode_ERROR_CODE_SHUTDOWN         ErrorCode = 7
 	// The connection failed authentication: a missing or invalid token, or a non-Hello first frame.
 	ErrorCode_ERROR_CODE_UNAUTHENTICATED ErrorCode = 8
+	// An append's `fail_if_exists` existence clause matched: the guarded event already exists.
+	// Distinct from ERROR_CODE_CONFLICT (a boundary conflict) so a client can treat it as
+	// "already applied" rather than "rebuild and retry". Terminal when durable; a same-batch
+	// race is retryable like any conflict (see the `retryable` field).
+	ErrorCode_ERROR_CODE_ALREADY_EXISTS ErrorCode = 9
 )
 
 // Enum value maps for ErrorCode.
@@ -48,6 +53,7 @@ var (
 		6: "ERROR_CODE_INTERNAL",
 		7: "ERROR_CODE_SHUTDOWN",
 		8: "ERROR_CODE_UNAUTHENTICATED",
+		9: "ERROR_CODE_ALREADY_EXISTS",
 	}
 	ErrorCode_value = map[string]int32{
 		"ERROR_CODE_UNSPECIFIED":      0,
@@ -59,6 +65,7 @@ var (
 		"ERROR_CODE_INTERNAL":         6,
 		"ERROR_CODE_SHUTDOWN":         7,
 		"ERROR_CODE_UNAUTHENTICATED":  8,
+		"ERROR_CODE_ALREADY_EXISTS":   9,
 	}
 )
 
@@ -257,12 +264,17 @@ func (x *Query) GetItems() []*QueryItem {
 	return nil
 }
 
-// The guard on an append: reject if any event after `after` matches the query.
-// `after` = 0 means "consider the whole log" (positions are 1-based).
+// The guard on an append: two checks, OR'd, so the append is rejected if either fires.
+// The boundary check rejects if any event after `after` matches `fail_if_events_match`
+// (`after` = 0 means "the whole log"; positions are 1-based). The optional existence check
+// rejects if any event anywhere (implicit `after` = 0) matches `fail_if_exists`, the
+// idempotency/dedupe guard; a conflict from it is reported as ERROR_CODE_ALREADY_EXISTS,
+// distinct from a boundary ERROR_CODE_CONFLICT.
 type AppendCondition struct {
 	state             protoimpl.MessageState `protogen:"open.v1"`
 	FailIfEventsMatch *Query                 `protobuf:"bytes,1,opt,name=fail_if_events_match,json=failIfEventsMatch,proto3" json:"fail_if_events_match,omitempty"`
 	After             uint64                 `protobuf:"varint,2,opt,name=after,proto3" json:"after,omitempty"`
+	FailIfExists      *Query                 `protobuf:"bytes,3,opt,name=fail_if_exists,json=failIfExists,proto3,oneof" json:"fail_if_exists,omitempty"`
 	unknownFields     protoimpl.UnknownFields
 	sizeCache         protoimpl.SizeCache
 }
@@ -309,6 +321,13 @@ func (x *AppendCondition) GetAfter() uint64 {
 		return x.After
 	}
 	return 0
+}
+
+func (x *AppendCondition) GetFailIfExists() *Query {
+	if x != nil {
+		return x.FailIfExists
+	}
+	return nil
 }
 
 type AppendRequest struct {
@@ -1471,10 +1490,12 @@ const file_tephra_v1_tephra_proto_rawDesc = "" +
 	"\x04tags\x18\x02 \x03(\tR\x04tags\"E\n" +
 	"\x05Query\x12\x10\n" +
 	"\x03all\x18\x01 \x01(\bR\x03all\x12*\n" +
-	"\x05items\x18\x02 \x03(\v2\x14.tephra.v1.QueryItemR\x05items\"j\n" +
+	"\x05items\x18\x02 \x03(\v2\x14.tephra.v1.QueryItemR\x05items\"\xba\x01\n" +
 	"\x0fAppendCondition\x12A\n" +
 	"\x14fail_if_events_match\x18\x01 \x01(\v2\x10.tephra.v1.QueryR\x11failIfEventsMatch\x12\x14\n" +
-	"\x05after\x18\x02 \x01(\x04R\x05after\"\x86\x01\n" +
+	"\x05after\x18\x02 \x01(\x04R\x05after\x12;\n" +
+	"\x0efail_if_exists\x18\x03 \x01(\v2\x10.tephra.v1.QueryH\x00R\ffailIfExists\x88\x01\x01B\x11\n" +
+	"\x0f_fail_if_exists\"\x86\x01\n" +
 	"\rAppendRequest\x12(\n" +
 	"\x06events\x18\x01 \x03(\v2\x10.tephra.v1.EventR\x06events\x12=\n" +
 	"\tcondition\x18\x02 \x01(\v2\x1a.tephra.v1.AppendConditionH\x00R\tcondition\x88\x01\x01B\f\n" +
@@ -1554,7 +1575,7 @@ const file_tephra_v1_tephra_proto_rawDesc = "" +
 	"\tcaught_up\x18\x06 \x01(\v2\x1c.tephra.v1.SubscribeCaughtUpH\x00R\bcaughtUp\x120\n" +
 	"\x05stats\x18\a \x01(\v2\x18.tephra.v1.StatsResponseH\x00R\x05stats\x122\n" +
 	"\thello_ack\x18\b \x01(\v2\x13.tephra.v1.HelloAckH\x00R\bhelloAckB\x06\n" +
-	"\x04kind*\xff\x01\n" +
+	"\x04kind*\x9e\x02\n" +
 	"\tErrorCode\x12\x1a\n" +
 	"\x16ERROR_CODE_UNSPECIFIED\x10\x00\x12\x17\n" +
 	"\x13ERROR_CODE_CONFLICT\x10\x01\x12\x1f\n" +
@@ -1564,7 +1585,8 @@ const file_tephra_v1_tephra_proto_rawDesc = "" +
 	"\x16ERROR_CODE_BAD_REQUEST\x10\x05\x12\x17\n" +
 	"\x13ERROR_CODE_INTERNAL\x10\x06\x12\x17\n" +
 	"\x13ERROR_CODE_SHUTDOWN\x10\a\x12\x1e\n" +
-	"\x1aERROR_CODE_UNAUTHENTICATED\x10\bB:Z8github.com/tephradb/tephra-go/internal/tephrapb;tephrapbb\x06proto3"
+	"\x1aERROR_CODE_UNAUTHENTICATED\x10\b\x12\x1d\n" +
+	"\x19ERROR_CODE_ALREADY_EXISTS\x10\tB:Z8github.com/tephradb/tephra-go/internal/tephrapb;tephrapbb\x06proto3"
 
 var (
 	file_tephra_v1_tephra_proto_rawDescOnce sync.Once
@@ -1606,31 +1628,32 @@ var file_tephra_v1_tephra_proto_goTypes = []any{
 var file_tephra_v1_tephra_proto_depIdxs = []int32{
 	2,  // 0: tephra.v1.Query.items:type_name -> tephra.v1.QueryItem
 	3,  // 1: tephra.v1.AppendCondition.fail_if_events_match:type_name -> tephra.v1.Query
-	1,  // 2: tephra.v1.AppendRequest.events:type_name -> tephra.v1.Event
-	4,  // 3: tephra.v1.AppendRequest.condition:type_name -> tephra.v1.AppendCondition
-	3,  // 4: tephra.v1.ReadRequest.query:type_name -> tephra.v1.Query
-	3,  // 5: tephra.v1.SubscribeRequest.query:type_name -> tephra.v1.Query
-	1,  // 6: tephra.v1.SequencedEvent.event:type_name -> tephra.v1.Event
-	11, // 7: tephra.v1.ReadEvents.events:type_name -> tephra.v1.SequencedEvent
-	0,  // 8: tephra.v1.ErrorResponse.code:type_name -> tephra.v1.ErrorCode
-	5,  // 9: tephra.v1.Request.append:type_name -> tephra.v1.AppendRequest
-	6,  // 10: tephra.v1.Request.read:type_name -> tephra.v1.ReadRequest
-	7,  // 11: tephra.v1.Request.subscribe:type_name -> tephra.v1.SubscribeRequest
-	8,  // 12: tephra.v1.Request.cancel:type_name -> tephra.v1.CancelRequest
-	9,  // 13: tephra.v1.Request.stats:type_name -> tephra.v1.StatsRequest
-	15, // 14: tephra.v1.Request.hello:type_name -> tephra.v1.Hello
-	10, // 15: tephra.v1.Response.append:type_name -> tephra.v1.AppendResponse
-	12, // 16: tephra.v1.Response.read_events:type_name -> tephra.v1.ReadEvents
-	13, // 17: tephra.v1.Response.read_end:type_name -> tephra.v1.ReadEnd
-	18, // 18: tephra.v1.Response.error:type_name -> tephra.v1.ErrorResponse
-	14, // 19: tephra.v1.Response.caught_up:type_name -> tephra.v1.SubscribeCaughtUp
-	17, // 20: tephra.v1.Response.stats:type_name -> tephra.v1.StatsResponse
-	16, // 21: tephra.v1.Response.hello_ack:type_name -> tephra.v1.HelloAck
-	22, // [22:22] is the sub-list for method output_type
-	22, // [22:22] is the sub-list for method input_type
-	22, // [22:22] is the sub-list for extension type_name
-	22, // [22:22] is the sub-list for extension extendee
-	0,  // [0:22] is the sub-list for field type_name
+	3,  // 2: tephra.v1.AppendCondition.fail_if_exists:type_name -> tephra.v1.Query
+	1,  // 3: tephra.v1.AppendRequest.events:type_name -> tephra.v1.Event
+	4,  // 4: tephra.v1.AppendRequest.condition:type_name -> tephra.v1.AppendCondition
+	3,  // 5: tephra.v1.ReadRequest.query:type_name -> tephra.v1.Query
+	3,  // 6: tephra.v1.SubscribeRequest.query:type_name -> tephra.v1.Query
+	1,  // 7: tephra.v1.SequencedEvent.event:type_name -> tephra.v1.Event
+	11, // 8: tephra.v1.ReadEvents.events:type_name -> tephra.v1.SequencedEvent
+	0,  // 9: tephra.v1.ErrorResponse.code:type_name -> tephra.v1.ErrorCode
+	5,  // 10: tephra.v1.Request.append:type_name -> tephra.v1.AppendRequest
+	6,  // 11: tephra.v1.Request.read:type_name -> tephra.v1.ReadRequest
+	7,  // 12: tephra.v1.Request.subscribe:type_name -> tephra.v1.SubscribeRequest
+	8,  // 13: tephra.v1.Request.cancel:type_name -> tephra.v1.CancelRequest
+	9,  // 14: tephra.v1.Request.stats:type_name -> tephra.v1.StatsRequest
+	15, // 15: tephra.v1.Request.hello:type_name -> tephra.v1.Hello
+	10, // 16: tephra.v1.Response.append:type_name -> tephra.v1.AppendResponse
+	12, // 17: tephra.v1.Response.read_events:type_name -> tephra.v1.ReadEvents
+	13, // 18: tephra.v1.Response.read_end:type_name -> tephra.v1.ReadEnd
+	18, // 19: tephra.v1.Response.error:type_name -> tephra.v1.ErrorResponse
+	14, // 20: tephra.v1.Response.caught_up:type_name -> tephra.v1.SubscribeCaughtUp
+	17, // 21: tephra.v1.Response.stats:type_name -> tephra.v1.StatsResponse
+	16, // 22: tephra.v1.Response.hello_ack:type_name -> tephra.v1.HelloAck
+	23, // [23:23] is the sub-list for method output_type
+	23, // [23:23] is the sub-list for method input_type
+	23, // [23:23] is the sub-list for extension type_name
+	23, // [23:23] is the sub-list for extension extendee
+	0,  // [0:23] is the sub-list for field type_name
 }
 
 func init() { file_tephra_v1_tephra_proto_init() }
@@ -1638,6 +1661,7 @@ func file_tephra_v1_tephra_proto_init() {
 	if File_tephra_v1_tephra_proto != nil {
 		return
 	}
+	file_tephra_v1_tephra_proto_msgTypes[3].OneofWrappers = []any{}
 	file_tephra_v1_tephra_proto_msgTypes[4].OneofWrappers = []any{}
 	file_tephra_v1_tephra_proto_msgTypes[5].OneofWrappers = []any{}
 	file_tephra_v1_tephra_proto_msgTypes[14].OneofWrappers = []any{}

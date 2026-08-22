@@ -160,18 +160,41 @@ func QueryAll() Query { return Query{all: true} }
 // QueryItems is a query over a set of items OR'd together. With no items it matches nothing.
 func QueryItems(items ...QueryItem) Query { return Query{items: items} }
 
-// AppendCondition guards an append: the append is rejected if any event after After matches
-// FailIfEventsMatch. After is an exclusive lower bound; Zero (the default) considers the whole
-// log, i.e. fail if any event matches. Build one with NewAppendCondition, then optionally set After.
+// AppendCondition guards an append with two checks, OR'd, so the append is rejected if either
+// fires.
+//
+// The boundary check rejects the append if any event after After matches FailIfEventsMatch. After
+// is an exclusive lower bound; Zero (the default) considers the whole log, i.e. fail if any event
+// matches (the uniqueness-guard pattern).
+//
+// The optional existence check rejects the append if any event anywhere (implicit After == Zero)
+// matches FailIfExists. It is the idempotency/dedupe primitive: assert a key is globally absent
+// even when the boundary legitimately advanced past events the decision read, which a single After
+// cannot express. A conflict from this clause arrives as ErrCodeAlreadyExists rather than
+// ErrCodeConflict, so a client can treat "already applied" differently from "boundary moved,
+// rebuild and retry". A nil FailIfExists disables the check.
+//
+// Build one with NewAppendCondition, then optionally set After and FailIfExists, or use ExistsOnly
+// for the pure-dedupe case.
 type AppendCondition struct {
 	FailIfEventsMatch Query
 	After             Position
+	FailIfExists      *Query
 }
 
 // NewAppendCondition builds a condition checking the whole log (After == Zero): fail if any event
-// matches. Set the After field afterward to only check events strictly after a position.
+// matches. Set the After field afterward to only check events strictly after a position, and
+// FailIfExists to add the existence check.
 func NewAppendCondition(failIfEventsMatch Query) AppendCondition {
 	return AppendCondition{FailIfEventsMatch: failIfEventsMatch}
+}
+
+// ExistsOnly builds a condition with no boundary check, only the existence clause: fail the append
+// if any event anywhere matches failIfExists. The pure idempotency/dedupe guard, without a decision
+// boundary. The boundary query is left as an empty item set, which matches nothing, so only the
+// existence check can fire.
+func ExistsOnly(failIfExists Query) AppendCondition {
+	return AppendCondition{FailIfEventsMatch: QueryItems(), FailIfExists: &failIfExists}
 }
 
 // Limit returns a pointer to n, for passing an explicit result cap to Read/ReadBack. A nil limit
@@ -252,10 +275,14 @@ func (q Query) toPB() *tephrapb.Query {
 }
 
 func (c AppendCondition) toPB() *tephrapb.AppendCondition {
-	return &tephrapb.AppendCondition{
+	out := &tephrapb.AppendCondition{
 		FailIfEventsMatch: c.FailIfEventsMatch.toPB(),
 		After:             uint64(c.After),
 	}
+	if c.FailIfExists != nil {
+		out.FailIfExists = c.FailIfExists.toPB()
+	}
+	return out
 }
 
 // sequencedFromPB builds a SequencedEvent from a wire message. The server is the source of truth

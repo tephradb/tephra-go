@@ -44,8 +44,11 @@ events, watermark, err := client.ReadAll(ctx, tephra.QueryAll(), tephra.Zero, ni
 - **Query**: `QueryAll()` matches everything; `QueryItems(items...)` OR's items, where each item
   AND's its tags and OR's its types (an empty item set matches nothing, distinct from the
   catch-all). Build items with `OfTypes`, `WithTags`, or `NewQueryItem`.
-- **AppendCondition**: a dynamic consistency boundary. Reject the append if any event after
-  `After` matches the query. `After == Zero` considers the whole log.
+- **AppendCondition**: two checks, OR'd. The boundary check (a dynamic consistency boundary)
+  rejects the append if any event after `After` matches `FailIfEventsMatch`; `After == Zero`
+  considers the whole log. The optional existence check (`FailIfExists`, or `ExistsOnly` for the
+  pure case) rejects the append if any event anywhere matches, the idempotency/dedupe guard, and
+  reports `ErrCodeAlreadyExists` rather than `ErrCodeConflict`.
 
 ## Reads and pagination
 
@@ -114,7 +117,8 @@ fmt.Printf("%d events across %d segments\n", stats.EventCount, stats.SegmentCoun
 
 ## Errors
 
-- `*ServerError`: the server returned an error. `Code` is an `ErrorCode`; `Retryable` marks an
+- `*ServerError`: the server returned an error. `Code` is an `ErrorCode` (`ErrCodeConflict` for a
+  boundary conflict, `ErrCodeAlreadyExists` for an existence-clause match); `Retryable` marks an
   advisory same-batch append conflict (safe to retry); `ConflictPosition` is set for a durable
   append conflict. Match with `errors.As`.
 - `*ProtocolError`: the peer sent something outside the protocol.
